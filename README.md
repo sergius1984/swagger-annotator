@@ -1,0 +1,208 @@
+Ниже – готовый Markdown-файл для корня проекта swagger-annotator. Скопируйте его как README.md.
+
+markdown
+# swagger-annotator
+
+Автоматическое добавление и обновление Swagger-аннотаций в Go-проектах.
+
+[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+---
+
+## 📖 Описание
+
+**swagger-annotator** – утилита командной строки для автоматической синхронизации документации API с исходным кодом Go-проектов.  
+Она сканирует код, находит HTTP‑обработчики, сверяет их с конфигурационным файлом `swagger_annotations.json` и генерирует/обновляет Swagger‑комментарии в формате [swaggo/swag](https://github.com/swaggo/swag).
+
+**Ключевые возможности:**
+- 🔍 Поиск обработчиков через AST или семантический анализ типов
+- 🧩 Поддержка обычных функций, методов структур и обёрток middleware
+- ✍️ Автоматическая вставка комментариев с сохранением форматирования
+- 📊 Статистика по добавленным, обновлённым и пропущенным аннотациям
+- 🧪 Режим `-dry-run` для безопасной проверки
+
+---
+
+## 🚀 Быстрый старт
+
+### Установка
+
+```bash
+cd swagger-annotator
+make install
+Или вручную:
+
+bash
+go install ./cmd/swagger-annotator
+Подготовка конфигурации
+Создайте в корне вашего Go‑проекта файл swagger_annotations.json (пример ниже).
+В нём описываются все обработчики, для которых нужна документация.
+
+Запуск
+bash
+# Перейдите в корень анализируемого проекта
+cd /path/to/your/go/project
+
+# Выполните аннотирование
+swagger-annotator -config swagger_annotations.json -dir . -verbose
+При каждом добавлении нового маршрута или изменении API просто повторяйте запуск.
+
+📄 Формат конфигурации
+Пример swagger_annotations.json:
+
+json
+{
+  "handlers": [
+    {
+      "id": "CancelHandler",
+      "file": "internal/httpapi/jobs.go",
+      "function": "CancelHandler",
+      "method": "POST",
+      "path": "/api/jobs/{id}/cancel",
+      "summary": "Отменить джоб",
+      "description": "Отправляет управляющее сообщение 'cancel' в очередь.",
+      "tags": ["jobs"],
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Отмена запущена",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "status": { "type": "string", "example": "cancelling" },
+              "job_id": { "type": "string" }
+            }
+          }
+        }
+      },
+      "security": [{ "ApiKeyAuth": [] }]
+    }
+  ]
+}
+Структура записи обработчика
+Поле	Тип	Обязательность	Описание
+id	string	да	Уникальный идентификатор (можно использовать имя функции)
+file	string	да	Относительный путь к файлу (с /), например internal/httpapi/jobs.go
+function	string	да	Имя функции без пакета (для методов – без ресивера)
+method	string	да	HTTP-метод (GET, POST, PUT, DELETE, …)
+path	string	да	URL-путь, может содержать переменные {id}
+summary	string	да	Краткое описание операции (непустое значение активирует генерацию)
+description	string	нет	Полное описание
+tags	array of string	нет	Список тегов для группировки в Swagger UI
+consumes	string	нет	MIME‑тип принимаемых данных (по умолчанию json)
+produces	string	нет	MIME‑тип возвращаемых данных (по умолчанию json)
+parameters	array of object	нет	Параметры запроса (см. ниже)
+responses	object	нет	Коды ответов ("200", "400", …) с описанием и схемой
+security	array of object	нет	Настройки безопасности, например [{"ApiKeyAuth": []}]
+deprecated	boolean	нет	Пометить операцию как устаревшую
+Параметры (parameters)
+Каждый параметр может быть описан двумя способами:
+
+1. Со схемой (рекомендуется)
+
+json
+{
+  "name": "id",
+  "in": "path",
+  "required": true,
+  "schema": { "type": "string" }
+}
+2. Упрощённый формат (без schema)
+
+json
+{
+  "name": "body",
+  "in": "body",
+  "required": true,
+  "type": "string",
+  "description": "Содержимое запроса"
+}
+Поддерживаются $ref для ссылок на модели:
+
+json
+"schema": { "$ref": "#/components/schemas/SubmitRequest" }
+⚙️ Флаги командной строки
+Флаг	По умолчанию	Описание
+-config	swagger_annotations.json	Путь к конфигурационному файлу
+-dir	.	Корневая директория анализируемого Go‑проекта
+-dry-run	false	Только показать изменения, не модифицировать файлы
+-verbose	false	Подробный вывод процесса
+-output	""	Сохранить отчёт в указанный файл
+-add-defaults	false	Добавлять записи по умолчанию для новых обработчиков (пустые аннотации)
+-skip-existing	false	Не обновлять обработчики, уже имеющие Swagger‑комментарии
+-semantic	false	Использовать семантический анализатор (go/packages) для точного определения типов
+📋 Примеры использования
+Проверка планируемых изменений
+bash
+swagger-annotator -dry-run -verbose
+Генерация документации и добавление новых обработчиков
+bash
+swagger-annotator -add-defaults -verbose
+Обновление только существующих аннотаций (пропуск новых)
+bash
+swagger-annotator -skip-existing
+Точный семантический анализ
+bash
+swagger-annotator -semantic
+Сохранение отчёта
+bash
+swagger-annotator -output report.txt
+🏗️ Архитектура
+text
+swagger-annotator/
+├── cmd/swagger-annotator/        # CLI, сборка пайплайна
+├── internal/
+│   ├── config/                  # Загрузка и сохранение swagger_annotations.json
+│   ├── scanner/                 # Поиск HTTP‑обработчиков
+│   │   ├── scanner.go           # Интерфейс HandlerFinder
+│   │   ├── ast_scanner.go       # Быстрый сканер на основе AST
+│   │   └── semantic_scanner.go  # Точный сканер с go/packages
+│   ├── annotations/             # Генерация Swagger‑комментариев
+│   └── updater/                 # Вставка комментариев в исходные файлы
+├── Makefile
+└── README.md
+Принцип работы:
+
+Сканер обходит файлы проекта и собирает функции/методы, используемые в маршрутах (srv.Handle, srv.HandleFunc и обёртки).
+
+Конфиг сопоставляет найденные обработчики с описаниями из swagger_annotations.json. При необходимости дополняет его новыми записями.
+
+Генератор по описанию строит комментарий в формате Swaggo.
+
+Обновитель находит нужную функцию в .go-файле и заменяет её doc‑комментарий, сохраняя форматирование (go/format).
+
+🧩 Интеграция с проектом
+Утилита swagger-annotator – самостоятельный модуль Go.
+Для удобной разработки в связке с вашим проектом используйте Go Workspace.
+
+Разместите папку swagger-annotator рядом с основным проектом.
+
+В общей родительской директории создайте go.work:
+
+go
+go 1.21
+
+use (
+    ./your-project
+    ./swagger-annotator
+)
+Выполните go work sync.
+
+Теперь можно редактировать код обоих модулей в одной среде, и gopls будет работать корректно.
+
+⚠️ Примечания
+Утилита изменяет только комментарии над функциями‑обработчиками. Весь остальной код остаётся нетронутым.
+
+Для поиска обработчиков используется анализ AST маршрутизаторов Handle / HandleFunc. Убедитесь, что ваши обработчики действительно регистрируются через такие вызовы.
+
+Режим -semantic загружает все пакеты проекта – он медленнее, но распознаёт алиасы типов и нетривиальные обёртки.
+
+Перед первым запуском рекомендуется выполнить swag init в целевом проекте для генерации docs/ (если они используются).
