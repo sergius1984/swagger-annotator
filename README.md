@@ -1,14 +1,5 @@
 
 ```markdown
-# swagger-annotator
-
-Автоматическое добавление и обновление Swagger-аннотаций в Go-проектах.
-
-[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-
----
-
 ## 📖 Описание
 
 **swagger-annotator** – утилита командной строки для автоматической синхронизации документации API с исходным кодом Go-проектов.  
