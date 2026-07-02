@@ -10,16 +10,22 @@ import (
 	"strings"
 )
 
-type ASTScanner struct{}
+type ASTScanner struct {
+	AllHandlers bool
+}
 
 func (s *ASTScanner) Find(root string) ([]HandlerLocation, error) {
-	routeNames, err := collectRouteHandlersAST(root)
-	if err != nil {
-		return nil, fmt.Errorf("сбор маршрутов: %w", err)
+	var routeNames map[string]bool
+	if !s.AllHandlers {
+		var err error
+		routeNames, err = collectRouteHandlersAST(root)
+		if err != nil {
+			return nil, fmt.Errorf("сбор маршрутов: %w", err)
+		}
 	}
 
 	var handlers []HandlerLocation
-	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -52,8 +58,10 @@ func (s *ASTScanner) Find(root string) ([]HandlerLocation, error) {
 				continue
 			}
 			name := fn.Name.Name
-			if _, used := routeNames[name]; !used {
-				continue
+			if !s.AllHandlers {
+				if _, used := routeNames[name]; !used {
+					continue
+				}
 			}
 			info := HandlerLocation{
 				FuncName: name,
@@ -78,6 +86,7 @@ func (s *ASTScanner) Find(root string) ([]HandlerLocation, error) {
 	return handlers, err
 }
 
+// collectRouteHandlersAST обходит все вызовы srv.Handle/HandleFunc и собирает имена функций-обработчиков.
 func collectRouteHandlersAST(root string) (map[string]bool, error) {
 	names := map[string]bool{}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -87,7 +96,7 @@ func collectRouteHandlersAST(root string) (map[string]bool, error) {
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
-			return nil // игнорируем ошибки парсинга отдельных файлов
+			return nil
 		}
 		ast.Inspect(file, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
@@ -112,12 +121,27 @@ func collectRouteHandlersAST(root string) (map[string]bool, error) {
 	return names, err
 }
 
+// isHTTPHandlerFuncAST проверяет, является ли функция HTTP-обработчиком.
+// Поддерживает:
+//   - прямые обработчики: func(w http.ResponseWriter, r *http.Request)
+//   - фабрики: func(...) http.HandlerFunc или func(...) http.Handler
 func isHTTPHandlerFuncAST(fn *ast.FuncDecl) bool {
-	if fn.Type.Params == nil || len(fn.Type.Params.List) != 2 {
-		return false
+	if fn.Type.Params != nil && len(fn.Type.Params.List) == 2 {
+		// Проверка прямого обработчика
+		p0 := typeToString(fn.Type.Params.List[0].Type)
+		p1 := typeToString(fn.Type.Params.List[1].Type)
+		if (p0 == "http.ResponseWriter" || strings.HasSuffix(p0, ".ResponseWriter")) &&
+			(p1 == "*http.Request" || strings.HasSuffix(p1, ".Request")) {
+			return true
+		}
 	}
-	p0 := typeToString(fn.Type.Params.List[0].Type)
-	p1 := typeToString(fn.Type.Params.List[1].Type)
-	return (p0 == "http.ResponseWriter" || strings.HasSuffix(p0, ".ResponseWriter")) &&
-		(p1 == "*http.Request" || strings.HasSuffix(p1, ".Request"))
+	// Проверка возвращаемого типа: http.HandlerFunc или http.Handler
+	if fn.Type.Results != nil && len(fn.Type.Results.List) == 1 {
+		retType := typeToString(fn.Type.Results.List[0].Type)
+		if retType == "http.HandlerFunc" || strings.HasSuffix(retType, ".HandlerFunc") ||
+			retType == "http.Handler" || strings.HasSuffix(retType, ".Handler") {
+			return true
+		}
+	}
+	return false
 }

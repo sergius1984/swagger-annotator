@@ -1,3 +1,14 @@
+// Добавьте все новые обработчики в конфиг
+// C:\PRJ\swagger-annotator\swagger-annotator.exe -dir . -add-defaults -verbose
+
+// Заполните в swagger_annotations.json описания
+
+// # Проверка (без изменений)
+// C:\PRJ\swagger-annotator\swagger-annotator.exe -dir . -verbose -dry-run
+
+// # Применение
+// C:\PRJ\swagger-annotator\swagger-annotator.exe -dir . -verbose
+
 package main
 
 import (
@@ -22,6 +33,7 @@ func main() {
 	addDefaults := flag.Bool("add-defaults", false, "Добавлять дефолтные записи для новых хендлеров")
 	skipExisting := flag.Bool("skip-existing", false, "Не обновлять существующие аннотации")
 	useSemantic := flag.Bool("semantic", false, "Использовать семантический анализатор (медленнее, но точнее)")
+	allHandlers := flag.Bool("all", false, "Искать все функции-обработчики, не фильтруя по маршрутам")
 	flag.Parse()
 
 	log.SetFlags(0)
@@ -41,10 +53,10 @@ func main() {
 	// Выбор сканера
 	var finder scanner.HandlerFinder
 	if *useSemantic {
-		finder = &scanner.SemanticScanner{}
+		finder = &scanner.SemanticScanner{AllHandlers: *allHandlers}
 		fmt.Println("🔬 Используется семантический анализ (go/packages)")
 	} else {
-		finder = &scanner.ASTScanner{}
+		finder = &scanner.ASTScanner{AllHandlers: *allHandlers}
 		fmt.Println("🔍 Используется синтаксический анализ (AST)")
 	}
 

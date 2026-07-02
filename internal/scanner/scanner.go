@@ -12,3 +12,8 @@ type HandlerLocation struct {
 type HandlerFinder interface {
 	Find(root string) ([]HandlerLocation, error)
 }
+
+// Opts – настройки сканера.
+type Opts struct {
+	AllHandlers bool // искать все функции с сигнатурой, не фильтруя по маршрутам
+}

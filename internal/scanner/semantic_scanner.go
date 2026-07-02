@@ -10,7 +10,9 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-type SemanticScanner struct{}
+type SemanticScanner struct {
+	AllHandlers bool
+}
 
 func (s *SemanticScanner) Find(root string) ([]HandlerLocation, error) {
 	cfg := &packages.Config{
@@ -22,31 +24,34 @@ func (s *SemanticScanner) Find(root string) ([]HandlerLocation, error) {
 		return nil, fmt.Errorf("загрузка пакетов: %w", err)
 	}
 
-	// Сначала собираем имена хендлеров из маршрутов
-	routeNames := map[string]bool{}
-	for _, pkg := range pkgs {
-		if pkg.Types == nil {
-			continue // пропускаем пакеты без типовой информации
-		}
-		for _, file := range pkg.Syntax {
-			ast.Inspect(file, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
+	// Собираем имена из маршрутов, если не AllHandlers
+	var routeNames map[string]bool
+	if !s.AllHandlers {
+		routeNames = map[string]bool{}
+		for _, pkg := range pkgs {
+			if pkg.Types == nil {
+				continue
+			}
+			for _, file := range pkg.Syntax {
+				ast.Inspect(file, func(n ast.Node) bool {
+					call, ok := n.(*ast.CallExpr)
+					if !ok {
+						return true
+					}
+					sel, ok := call.Fun.(*ast.SelectorExpr)
+					if !ok {
+						return true
+					}
+					if sel.Sel.Name != "Handle" && sel.Sel.Name != "HandleFunc" {
+						return true
+					}
+					if len(call.Args) < 2 {
+						return true
+					}
+					extractFuncName(call.Args[1], routeNames)
 					return true
-				}
-				sel, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok {
-					return true
-				}
-				if sel.Sel.Name != "Handle" && sel.Sel.Name != "HandleFunc" {
-					return true
-				}
-				if len(call.Args) < 2 {
-					return true
-				}
-				extractFuncName(call.Args[1], routeNames)
-				return true
-			})
+				})
+			}
 		}
 	}
 
@@ -63,8 +68,10 @@ func (s *SemanticScanner) Find(root string) ([]HandlerLocation, error) {
 					continue
 				}
 				name := fn.Name.Name
-				if _, used := routeNames[name]; !used {
-					continue
+				if !s.AllHandlers {
+					if _, used := routeNames[name]; !used {
+						continue
+					}
 				}
 				if !isHTTPHandlerFuncSemantic(pkg, fn) {
 					continue
@@ -97,34 +104,40 @@ func (s *SemanticScanner) Find(root string) ([]HandlerLocation, error) {
 }
 
 func isHTTPHandlerFuncSemantic(pkg *packages.Package, fn *ast.FuncDecl) bool {
-	if fn.Type.Params == nil || len(fn.Type.Params.List) != 2 {
-		return false
+	// Проверка прямого обработчика: ровно два параметра и соответствующие типы
+	if fn.Type.Params != nil && len(fn.Type.Params.List) == 2 {
+		t1 := pkg.TypesInfo.TypeOf(fn.Type.Params.List[0].Type)
+		t2 := pkg.TypesInfo.TypeOf(fn.Type.Params.List[1].Type)
+		if t1 != nil && t2 != nil {
+			respWriter := lookupType(pkg, "net/http", "ResponseWriter")
+			reqType := lookupType(pkg, "net/http", "Request")
+			if respWriter != nil && reqType != nil {
+				if types.Implements(t1, respWriter.Underlying().(*types.Interface)) {
+					if ptr, ok := t2.(*types.Pointer); ok {
+						if named, ok := ptr.Elem().(*types.Named); ok {
+							if named.Obj() == reqType.Obj() {
+								return true
+							}
+						}
+					}
+				}
+			}
+		}
 	}
-	t1 := pkg.TypesInfo.TypeOf(fn.Type.Params.List[0].Type)
-	t2 := pkg.TypesInfo.TypeOf(fn.Type.Params.List[1].Type)
-	if t1 == nil || t2 == nil {
-		return false
-	}
-
-	// Ищем http.ResponseWriter в импортированных пакетах
-	respWriter := lookupType(pkg, "net/http", "ResponseWriter")
-	reqType := lookupType(pkg, "net/http", "Request")
-	if respWriter == nil || reqType == nil {
-		return false
-	}
-
-	if !types.Implements(t1, respWriter.Underlying().(*types.Interface)) {
-		return false
-	}
-	if ptr, ok := t2.(*types.Pointer); ok {
-		if named, ok := ptr.Elem().(*types.Named); ok {
-			return named.Obj() == reqType.Obj()
+	// Проверка фабрики: возвращает http.HandlerFunc или http.Handler
+	if fn.Type.Results != nil && len(fn.Type.Results.List) == 1 {
+		retType := pkg.TypesInfo.TypeOf(fn.Type.Results.List[0].Type)
+		if retType != nil {
+			retTypeStr := retType.String()
+			if strings.HasSuffix(retTypeStr, "http.HandlerFunc") ||
+				strings.HasSuffix(retTypeStr, "http.Handler") {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-// lookupType ищет тип в импортированном пакете, используя pkg.Types
 func lookupType(pkg *packages.Package, importPath, name string) *types.Named {
 	if pkg.Types == nil {
 		return nil

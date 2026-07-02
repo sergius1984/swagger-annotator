@@ -2,19 +2,44 @@ package scanner
 
 import (
 	"go/ast"
+	"strings"
 )
 
-// extractFuncName и typeToString перенесены из ast_scanner.go для переиспользования.
-// Можно вынести в общий файл, но для простоты продублированы.
+// extractFuncName рекурсивно извлекает имя функции-обработчика из выражения,
+// учитывая цепочки вызовов и .ServeHTTP.
 func extractFuncName(expr ast.Expr, names map[string]bool) {
 	switch e := expr.(type) {
 	case *ast.Ident:
 		names[e.Name] = true
 	case *ast.SelectorExpr:
+		if e.Sel.Name == "ServeHTTP" {
+			extractFuncName(e.X, names)
+			return
+		}
 		names[e.Sel.Name] = true
 	case *ast.CallExpr:
-		if len(e.Args) > 0 {
+		funName := ""
+		switch fun := e.Fun.(type) {
+		case *ast.Ident:
+			funName = fun.Name
+		case *ast.SelectorExpr:
+			funName = typeToString(fun)
+		}
+		wrapFuncs := map[string]bool{
+			"auth.Wrap":    true,
+			"calcTiming":   true,
+			"pregenTiming": true,
+		}
+		if wrapFuncs[funName] && len(e.Args) > 0 {
 			extractFuncName(e.Args[0], names)
+		} else {
+			if funName != "" {
+				if dot := strings.LastIndexByte(funName, '.'); dot != -1 {
+					names[funName[dot+1:]] = true
+				} else {
+					names[funName] = true
+				}
+			}
 		}
 	}
 }
