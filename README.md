@@ -1,3 +1,5 @@
+
+```markdown
 # swagger-annotator
 
 Автоматическое добавление и обновление Swagger-аннотаций в Go-проектах.
