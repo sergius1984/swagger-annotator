@@ -112,21 +112,6 @@ func collectRouteHandlersAST(root string) (map[string]bool, error) {
 	return names, err
 }
 
-func extractFuncName(expr ast.Expr, names map[string]bool) {
-	switch e := expr.(type) {
-	case *ast.Ident:
-		names[e.Name] = true
-	case *ast.SelectorExpr:
-		// метод: a.LoginHandler -> берём имя метода
-		names[e.Sel.Name] = true
-	case *ast.CallExpr:
-		// обёртка: auth.Wrap(handler) -> внутрь
-		if len(e.Args) > 0 {
-			extractFuncName(e.Args[0], names)
-		}
-	}
-}
-
 func isHTTPHandlerFuncAST(fn *ast.FuncDecl) bool {
 	if fn.Type.Params == nil || len(fn.Type.Params.List) != 2 {
 		return false
@@ -135,17 +120,4 @@ func isHTTPHandlerFuncAST(fn *ast.FuncDecl) bool {
 	p1 := typeToString(fn.Type.Params.List[1].Type)
 	return (p0 == "http.ResponseWriter" || strings.HasSuffix(p0, ".ResponseWriter")) &&
 		(p1 == "*http.Request" || strings.HasSuffix(p1, ".Request"))
-}
-
-func typeToString(expr ast.Expr) string {
-	switch t := expr.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.SelectorExpr:
-		return typeToString(t.X) + "." + t.Sel.Name
-	case *ast.StarExpr:
-		return "*" + typeToString(t.X)
-	default:
-		return ""
-	}
 }

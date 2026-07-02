@@ -22,9 +22,12 @@ func (s *SemanticScanner) Find(root string) ([]HandlerLocation, error) {
 		return nil, fmt.Errorf("загрузка пакетов: %w", err)
 	}
 
-	// Сначала собираем имена хендлеров из маршрутов (можно использовать AST по загруженным файлам)
+	// Сначала собираем имена хендлеров из маршрутов
 	routeNames := map[string]bool{}
 	for _, pkg := range pkgs {
+		if pkg.Types == nil {
+			continue // пропускаем пакеты без типовой информации
+		}
 		for _, file := range pkg.Syntax {
 			ast.Inspect(file, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
@@ -47,9 +50,11 @@ func (s *SemanticScanner) Find(root string) ([]HandlerLocation, error) {
 		}
 	}
 
-	// Теперь ищем функции с правильной сигнатурой, используя типы
 	var handlers []HandlerLocation
 	for _, pkg := range pkgs {
+		if pkg.Types == nil {
+			continue
+		}
 		for _, file := range pkg.Syntax {
 			rel := filepath.ToSlash(relativePath(root, pkg.Fset.File(file.Pos()).Name()))
 			for _, decl := range file.Decls {
@@ -61,7 +66,6 @@ func (s *SemanticScanner) Find(root string) ([]HandlerLocation, error) {
 				if _, used := routeNames[name]; !used {
 					continue
 				}
-				// Проверка сигнатуры с использованием типов
 				if !isHTTPHandlerFuncSemantic(pkg, fn) {
 					continue
 				}
@@ -96,22 +100,22 @@ func isHTTPHandlerFuncSemantic(pkg *packages.Package, fn *ast.FuncDecl) bool {
 	if fn.Type.Params == nil || len(fn.Type.Params.List) != 2 {
 		return false
 	}
-	// Используем TypesInfo для точного сравнения
 	t1 := pkg.TypesInfo.TypeOf(fn.Type.Params.List[0].Type)
 	t2 := pkg.TypesInfo.TypeOf(fn.Type.Params.List[1].Type)
 	if t1 == nil || t2 == nil {
 		return false
 	}
-	// Проверяем, что t1 реализует http.ResponseWriter, а t2 — *http.Request
+
+	// Ищем http.ResponseWriter в импортированных пакетах
 	respWriter := lookupType(pkg, "net/http", "ResponseWriter")
 	reqType := lookupType(pkg, "net/http", "Request")
 	if respWriter == nil || reqType == nil {
 		return false
 	}
+
 	if !types.Implements(t1, respWriter.Underlying().(*types.Interface)) {
 		return false
 	}
-	// Для *http.Request: t2 должен быть указателем на именованный тип, чей базовый тип — Request
 	if ptr, ok := t2.(*types.Pointer); ok {
 		if named, ok := ptr.Elem().(*types.Named); ok {
 			return named.Obj() == reqType.Obj()
@@ -120,13 +124,18 @@ func isHTTPHandlerFuncSemantic(pkg *packages.Package, fn *ast.FuncDecl) bool {
 	return false
 }
 
-// lookupType ищет тип в импортированном пакете
+// lookupType ищет тип в импортированном пакете, используя pkg.Types
 func lookupType(pkg *packages.Package, importPath, name string) *types.Named {
-	for _, imp := range pkg.Pkg.Imports() {
+	if pkg.Types == nil {
+		return nil
+	}
+	for _, imp := range pkg.Types.Imports() {
 		if imp.Path() == importPath {
 			obj := imp.Scope().Lookup(name)
 			if obj != nil {
-				return obj.Type().(*types.Named)
+				if named, ok := obj.Type().(*types.Named); ok {
+					return named
+				}
 			}
 		}
 	}
